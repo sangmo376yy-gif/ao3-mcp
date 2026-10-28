@@ -21,6 +21,7 @@ dependencies = [
     "curl_cffi",
     "beautifulsoup4",
     "google-genai",
+    "uvicorn>=0.30",  # added: --transport http
 ]
 
 [project.urls]

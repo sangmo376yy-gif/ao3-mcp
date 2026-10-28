@@ -35,6 +35,36 @@ and tell me how each one builds the tension — pacing, POV, what they leave uns
 
 The reader reports back with structure, style notes, and verbatim prose samples, so the model gets grounded in how the trope is actually written — not what it imagines fanfic sounds like. Works the same for roleplay: pull reports on fics that nail a character's voice and feed them in as style reference.
 
+## Hosting it instead of spawning it (this fork)
+
+Upstream runs over **stdio only** — it is a process your MCP client spawns, so there is
+no URL to point a remote client at. This fork adds an opt-in Streamable-HTTP mode:
+
+```bash
+pip install .
+MCP_TRANSPORT=http MCP_AUTH_TOKEN=$(openssl rand -hex 24) python server.py
+# → MCP endpoint: http://0.0.0.0:8000/mcp
+# → health check: http://0.0.0.0:8000/healthz
+```
+
+| Env var | What it does |
+| --- | --- |
+| `MCP_TRANSPORT` | `stdio` (default — upstream behaviour) or `http` |
+| `PORT` | bind port in http mode (Render sets this) |
+| `MCP_PATH` | endpoint path, default `/mcp` |
+| `MCP_AUTH_TOKEN` | if set, every MCP request must carry `Authorization: Bearer <token>`. **Set it on anything public** — otherwise you are hosting an open AO3 scraper on your own bill |
+
+Deploy on Render (free tier is enough to test): build `pip install .`, start
+`MCP_TRANSPORT=http python server.py`, health check path `/healthz`.
+
+Two things differ from stdio:
+
+- The HTTP transport is **stateless** (no `Mcp-Session-Id`), so a restart or a free-tier
+  cold start cannot leave a client holding a dead session id and 404-ing forever.
+- `read_works` takes **minutes** (sequential 0.6s-throttled downloads, then one reader
+  call per fic). Any host with a 60s request ceiling — Vercel Hobby, most serverless —
+  will cut it off. Only `search_works` / `find_tags` / `get_work` fit that budget.
+
 ## Install
 
 Requires **Python 3.10+** and a free **Gemini API key**:

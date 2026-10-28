@@ -2,3 +2,4 @@ mcp>=1.2,<2
 curl_cffi
 beautifulsoup4
 google-genai
+uvicorn>=0.30

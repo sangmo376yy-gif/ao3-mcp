@@ -60,6 +60,22 @@ def _parse_args() -> argparse.Namespace:
         help="Minimum seconds between AO3 requests — a politeness throttle "
              "(default: 0.6).",
     )
+    # --- hosting (added): upstream only ever speaks stdio ---
+    p.add_argument(
+        "--transport", default=os.environ.get("MCP_TRANSPORT", "stdio"),
+        choices=("stdio", "http"),
+        help="stdio (default: the MCP client spawns this process) or http "
+             "(Streamable HTTP on MCP_PATH — for Render, Docker, any host).",
+    )
+    p.add_argument(
+        "--host", default=os.environ.get("MCP_HOST", "0.0.0.0"),
+        help="Bind host for --transport http (default 0.0.0.0).",
+    )
+    p.add_argument(
+        "--port", type=int,
+        default=int(os.environ.get("PORT") or os.environ.get("MCP_PORT") or 8000),
+        help="Bind port for --transport http (default $PORT, else 8000).",
+    )
     args, _ = p.parse_known_args()
     return args
 
@@ -87,6 +103,60 @@ Two mechanical habits that save you grief:
 """
 
 mcp = FastMCP("ao3", instructions=SERVER_INSTRUCTIONS)
+
+# --- HTTP transport (added for hosting) ----------------------------------------
+# Upstream is stdio-only: the process exists to be spawned by the MCP client, so
+# there is no URL a remote client can point at. `--transport http` serves the same
+# five tools over Streamable HTTP at MCP_PATH, plus a bearer gate — a public URL
+# without one is an open proxy onto AO3 and onto whoever pays the reader's bill.
+MCP_PATH = "/" + (os.environ.get("MCP_PATH", "/mcp").strip("/") or "mcp")
+HEALTHZ_PATH = "/healthz"
+MCP_AUTH_TOKEN = os.environ.get("MCP_AUTH_TOKEN", "").strip()
+
+
+def _build_http_app(host: str, port: int):
+    """Starlette app: /healthz + the MCP endpoint behind the bearer gate.
+
+    stateless_http=True is deliberate. The client caches the mcp-session-id it gets
+    from initialize; a server restart (or a Render free-tier cold start) turns that
+    cached id into a permanent 404 "Session not found" on every later call. Stateless
+    mode has no session to go stale, so a restart costs nothing.
+    """
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    mcp.settings.host = host
+    mcp.settings.port = port
+    mcp.settings.streamable_http_path = MCP_PATH
+    mcp.settings.stateless_http = True
+    app = mcp.streamable_http_app()
+
+    async def healthz(request):
+        # Render pings this; it also answers "is the reader key loaded?" at a glance.
+        return JSONResponse({
+            "ok": True,
+            "service": "ao3-mcp",
+            "version": __version__,
+            "transport": "streamable-http",
+            "mcp_path": MCP_PATH,
+            "reader": reader.model if reader else "disabled",
+            "auth": "bearer" if MCP_AUTH_TOKEN else "open",
+        })
+
+    class BearerGate(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            # /healthz stays open: Render's health check can't send a token, and it
+            # leaks nothing but the version and whether the reader key is loaded.
+            if MCP_AUTH_TOKEN and request.url.path != HEALTHZ_PATH:
+                got = request.headers.get("authorization", "")
+                if got[:7].lower() != "bearer " or got[7:].strip() != MCP_AUTH_TOKEN:
+                    return JSONResponse({"error": "unauthorized"}, status_code=401)
+            return await call_next(request)
+
+    app.router.routes.insert(0, Route(HEALTHZ_PATH, healthz, methods=["GET"]))
+    app.add_middleware(BearerGate)
+    return app
 
 # Built in main() from the launch params, so importing this module (e.g. for the
 # console-script entry point) never requires an API key. The tools below read these
@@ -467,6 +537,20 @@ def main() -> None:
         f"throttling AO3 to one request every {args.min_interval:g}s, to be polite",
         file=sys.stderr,
     )
+
+    if args.transport == "http":
+        import uvicorn
+
+        app = _build_http_app(args.host, args.port)
+        print(
+            f"ao3-mcp · streamable-http on http://{args.host}:{args.port}{MCP_PATH} "
+            f"({'bearer' if MCP_AUTH_TOKEN else 'NO AUTH — anyone can use this'})",
+            file=sys.stderr,
+        )
+        uvicorn.run(app, host=args.host, port=args.port,
+                    log_level=os.environ.get("LOG_LEVEL", "info"))
+        return
+
     mcp.run()
 
 
