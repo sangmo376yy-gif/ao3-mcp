@@ -167,7 +167,57 @@ def _build_http_app(host: str, port: int):
                     return JSONResponse({"error": "unauthorized"}, status_code=401)
             return await call_next(request)
 
+    async def probe(request):
+        """Diagnose egress to AO3 step by step: DNS -> TCP -> plain TLS -> curl_cffi.
+
+        Exists because "AO3 unreachable" from a host has four very different causes and
+        they need different fixes.
+        """
+        import asyncio as _a
+        import time as _t
+
+        host = "archiveofourown.org"
+        loop = _a.get_running_loop()
+        out: dict[str, str] = {}
+
+        try:
+            infos = await loop.getaddrinfo(host, 443)
+            out["dns"] = ", ".join(sorted({i[4][0] for i in infos}))
+        except Exception as exc:
+            out["dns"] = f"FAIL {type(exc).__name__}: {exc}"
+
+        t0 = _t.time()
+        try:
+            _, w = await _a.wait_for(_a.open_connection(host, 443), 15)
+            out["tcp"] = f"ok {int((_t.time() - t0) * 1000)}ms"
+            w.close()
+        except Exception as exc:
+            out["tcp"] = f"FAIL {type(exc).__name__}: {exc}"
+
+        def _plain():
+            import urllib.request
+            req = urllib.request.Request(
+                f"https://{host}/", headers={"User-Agent": "Mozilla/5.0"}
+            )
+            t = _t.time()
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return f"{r.status} {len(r.read(4000))}B {int((_t.time() - t) * 1000)}ms"
+
+        def _cffi():
+            from curl_cffi import requests as cr
+            t = _t.time()
+            r = cr.get(f"https://{host}/", impersonate="safari_ios", timeout=25)
+            return f"{r.status_code} {len(r.text)}B {int((_t.time() - t) * 1000)}ms"
+
+        for name, fn in (("urllib_plain_tls", _plain), ("curl_cffi_safari_ios", _cffi)):
+            try:
+                out[name] = await loop.run_in_executor(None, fn)
+            except Exception as exc:
+                out[name] = f"FAIL {type(exc).__name__}: {str(exc)[:160]}"
+        return JSONResponse(out)
+
     app.router.routes.insert(0, Route(HEALTHZ_PATH, healthz, methods=["GET"]))
+    app.router.routes.insert(0, Route("/probe", probe, methods=["GET"]))
     app.add_middleware(BearerGate)
     return app
 
