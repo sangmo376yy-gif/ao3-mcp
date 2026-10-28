@@ -126,10 +126,23 @@ def _build_http_app(host: str, port: int):
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
+    from mcp.server.transport_security import TransportSecuritySettings
+
     mcp.settings.host = host
     mcp.settings.port = port
     mcp.settings.streamable_http_path = MCP_PATH
     mcp.settings.stateless_http = True
+    # The SDK's DNS-rebinding guard only whitelists localhost hosts, so ANY public
+    # hostname dies at the first request with 421 "Invalid Host header" — this is
+    # exactly what a Render deploy hits. The bearer gate is what actually guards this
+    # endpoint, so the guard stays off unless you pin hosts in MCP_ALLOWED_HOSTS
+    # (comma-separated, e.g. "ao3-mcp.onrender.com,custom.example.com").
+    pinned_hosts = [h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=bool(pinned_hosts),
+        allowed_hosts=pinned_hosts,
+        allowed_origins=[f"https://{h}" for h in pinned_hosts],
+    )
     app = mcp.streamable_http_app()
 
     async def healthz(request):
