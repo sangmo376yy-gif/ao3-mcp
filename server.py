@@ -209,25 +209,36 @@ def _build_http_app(host: str, port: int):
             r = cr.get(f"https://{host}/", impersonate="safari_ios", timeout=25)
             return f"{r.status_code} {len(r.text)}B {int((_t.time() - t) * 1000)}ms"
 
-        def _search_page():
-            # The homepage is cacheable behind Cloudflare; /works/search is the path that
-            # actually gets bot-gated, so probe the real thing the tools call.
-            from curl_cffi import requests as cr
-            t = _t.time()
-            r = cr.get(
-                f"https://{host}/works/search",
-                params={"work_search[query]": "time travel",
-                        "work_search[sort_column]": "kudos_count"},
-                impersonate="safari_ios", timeout=25,
-            )
-            body = r.text
-            marks = [m for m in ("challenge-platform", "cf-mitigated", "Just a moment",
-                                 "work blurb") if m in body]
-            return (f"{r.status_code} {len(body)}B {int((_t.time() - t) * 1000)}ms "
-                    f"markers={marks}")
+        # Which AO3 paths does Cloudflare actually gate for this egress IP? The homepage
+        # is cacheable and passes; the listing paths are the ones that get gated, and the
+        # fix differs depending on which ones come back.
+        paths = [
+            "/",
+            "/works/search?work_search%5Bquery%5D=time+travel&work_search%5Bsort_column%5D=kudos_count",
+            "/works?work_search%5Bquery%5D=time+travel&work_search%5Bsort_column%5D=kudos_count",
+            "/tags/Time%20Travel/works?work_search%5Bsort_column%5D=kudos_count",
+            "/tags/Time%20Travel",
+            "/works/4701869",
+            "/works/4701869?view_adult=true",
+            "/autocomplete/tag?term=time%20travel",
+        ]
 
-        search_url = (f"https://{host}/works/search?work_search%5Bquery%5D=time+travel"
-                      f"&work_search%5Bsort_column%5D=kudos_count")
+        def _path_matrix():
+            from curl_cffi import requests as cr
+            res = {}
+            for p in paths:
+                t = _t.time()
+                try:
+                    r = cr.get(f"https://{host}{p}", impersonate="safari_ios", timeout=25)
+                    body = r.text
+                    marks = [m for m in ("challenge-platform", "cf-mitigated",
+                                         "Just a moment", "work blurb", "blurb",
+                                         "title heading") if m in body]
+                    res[p[:60]] = (f"{r.status_code} {len(body)}B "
+                                   f"{int((_t.time() - t) * 1000)}ms {marks}")
+                except Exception as exc:
+                    res[p[:60]] = f"FAIL {type(exc).__name__}: {str(exc)[:90]}"
+            return res
 
         def _real_client():
             import asyncio as _aa
@@ -235,24 +246,28 @@ def _build_http_app(host: str, port: int):
             async def _run():
                 c = AO3Client(min_interval=0.6)
                 try:
-                    res = await _aa.wait_for(
+                    r = await _aa.wait_for(
                         c.search(tags="Time Travel", sort_by="kudos", pages=1), 45
                     )
-                    return f"ok found={res['total_found']} returned={res['returned']}"
+                    return f"ok found={r['total_found']} returned={r['returned']}"
                 finally:
                     await c.close()
 
             return _aa.run(_run())
 
-        for name, fn in (("urllib_plain_tls", _plain),
-                         ("curl_cffi_safari_ios", _cffi),
-                         ("curl_cffi_search_page", _search_page),
-                         ("real_ao3client_search", _real_client)):
+        for name, fn in (("urllib_plain_tls", _plain), ("curl_cffi_safari_ios", _cffi)):
             try:
                 out[name] = await loop.run_in_executor(None, fn)
             except Exception as exc:
                 out[name] = f"FAIL {type(exc).__name__}: {str(exc)[:160]}"
-        out["search_url"] = search_url
+        try:
+            out["paths"] = await loop.run_in_executor(None, _path_matrix)
+        except Exception as exc:
+            out["paths"] = f"FAIL {type(exc).__name__}: {str(exc)[:160]}"
+        try:
+            out["real_ao3client_search"] = await loop.run_in_executor(None, _real_client)
+        except Exception as exc:
+            out["real_ao3client_search"] = f"FAIL {type(exc).__name__}: {str(exc)[:160]}"
         return JSONResponse(out)
 
     app.router.routes.insert(0, Route(HEALTHZ_PATH, healthz, methods=["GET"]))
