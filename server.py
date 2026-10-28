@@ -209,11 +209,50 @@ def _build_http_app(host: str, port: int):
             r = cr.get(f"https://{host}/", impersonate="safari_ios", timeout=25)
             return f"{r.status_code} {len(r.text)}B {int((_t.time() - t) * 1000)}ms"
 
-        for name, fn in (("urllib_plain_tls", _plain), ("curl_cffi_safari_ios", _cffi)):
+        def _search_page():
+            # The homepage is cacheable behind Cloudflare; /works/search is the path that
+            # actually gets bot-gated, so probe the real thing the tools call.
+            from curl_cffi import requests as cr
+            t = _t.time()
+            r = cr.get(
+                f"https://{host}/works/search",
+                params={"work_search[query]": "time travel",
+                        "work_search[sort_column]": "kudos_count"},
+                impersonate="safari_ios", timeout=25,
+            )
+            body = r.text
+            marks = [m for m in ("challenge-platform", "cf-mitigated", "Just a moment",
+                                 "work blurb") if m in body]
+            return (f"{r.status_code} {len(body)}B {int((_t.time() - t) * 1000)}ms "
+                    f"markers={marks}")
+
+        search_url = (f"https://{host}/works/search?work_search%5Bquery%5D=time+travel"
+                      f"&work_search%5Bsort_column%5D=kudos_count")
+
+        def _real_client():
+            import asyncio as _aa
+
+            async def _run():
+                c = AO3Client(min_interval=0.6)
+                try:
+                    res = await _aa.wait_for(
+                        c.search(tags="Time Travel", sort_by="kudos", pages=1), 45
+                    )
+                    return f"ok found={res['total_found']} returned={res['returned']}"
+                finally:
+                    await c.close()
+
+            return _aa.run(_run())
+
+        for name, fn in (("urllib_plain_tls", _plain),
+                         ("curl_cffi_safari_ios", _cffi),
+                         ("curl_cffi_search_page", _search_page),
+                         ("real_ao3client_search", _real_client)):
             try:
                 out[name] = await loop.run_in_executor(None, fn)
             except Exception as exc:
                 out[name] = f"FAIL {type(exc).__name__}: {str(exc)[:160]}"
+        out["search_url"] = search_url
         return JSONResponse(out)
 
     app.router.routes.insert(0, Route(HEALTHZ_PATH, healthz, methods=["GET"]))
