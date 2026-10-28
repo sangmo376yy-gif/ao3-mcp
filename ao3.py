@@ -93,7 +93,19 @@ def _num(text: str) -> int:
 
 class AO3Client:
     def __init__(self, min_interval: float = 0.6):
-        self._client = AsyncSession(impersonate=IMPERSONATE, timeout=30)
+        # AO3_PROXY (added): Cloudflare gates AO3's *dynamic* paths — search, tag
+        # browse, work pages, autocomplete — by IP reputation, not only by TLS
+        # fingerprint. Measured from a Render instance: the cached homepage returns
+        # 200 while every dynamic path returns 525, even with the browser
+        # impersonation that works from a residential IP. Point this at a proxy whose
+        # exit IP AO3 will talk to (AO3_PROXY=http://user:pass@host:port) and the
+        # fetches leave through it while the MCP endpoint stays put.
+        proxy = (os.environ.get("AO3_PROXY") or "").strip()
+        self._client = AsyncSession(
+            impersonate=IMPERSONATE,
+            timeout=30,
+            proxies={"http": proxy, "https": proxy} if proxy else None,
+        )
         self._lock = asyncio.Lock()
         self._last_request = 0.0
         self.min_interval = min_interval
