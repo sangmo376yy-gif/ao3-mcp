@@ -5,7 +5,6 @@
 [![PyPI](https://img.shields.io/pypi/v/ao3-mcp)](https://pypi.org/project/ao3-mcp/)
 [![CI](https://github.com/ArturLys/ao3-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ArturLys/ao3-mcp/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)
-![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
 [![ao3-mcp MCP server](https://glama.ai/mcp/servers/ArturLys/ao3-mcp/badges/score.svg)](https://glama.ai/mcp/servers/ArturLys/ao3-mcp)
 
@@ -201,4 +200,6 @@ python server.py --api-key YOUR_GEMINI_KEY   # or point your client's command at
 
 ## License
 
-MIT
+All rights reserved — this repository is not MIT. `LICENSE` holds the terms;
+`NOTICE` carries the MIT notice for the files inherited from the upstream fork,
+which has to stay with that code.

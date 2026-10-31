@@ -8,11 +8,9 @@ version = "0.1.2"
 description = "Search AO3 and have fics read by a secondary model before they're recommended"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
 authors = [{ name = "Artur Lys" }]
 keywords = ["mcp", "mcp-server", "ao3", "archive-of-our-own", "fanfiction", "claude", "gemini"]
 classifiers = [
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
