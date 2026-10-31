@@ -1,0 +1,26 @@
+# Render 蓝图：Render 面板 New > Blueprint → 选 sangmo376yy-gif/ao3-mcp，照这个文件建服务。
+# 免费档 web service：15 分钟没请求会睡，下一次调用多等 30~50 秒冷启动。
+services:
+  - type: web
+    name: ao3-mcp
+    runtime: python
+    plan: free
+    region: singapore
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    # $PORT 由 Render 注入；server.py 见 --transport http 就用它，端点 /mcp，健康检查 /healthz
+    startCommand: python server.py --transport http --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: MCP_TRANSPORT
+        value: http
+      # 读长文要调 Gemini。true = 必填，值在 Render 面板里填，不进仓库。
+      - key: GEMINI_API_KEY
+        sync: false
+      # 公开 URL 必须带 token，否则等于把 AO3 爬虫和 Gemini 账单挂在公网上。
+      # generateValue: Render 自己生成，面板里能看（也能用 API 读 env-vars）。
+      - key: MCP_AUTH_TOKEN
+        generateValue: true
